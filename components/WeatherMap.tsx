@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MapContainer, Marker, TileLayer, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -18,16 +18,27 @@ export default function WeatherMap({ place }: { place: Place }) {
   const [frames, setFrames] = useState<Array<{ path: string; time: number }>>([]);
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const refreshRadar = useCallback(() => fetch("https://api.rainviewer.com/public/weather-maps.json", { cache: "no-store" })
+    .then(async (response) => { if (!response.ok) throw new Error("Radar request failed"); return response.json(); }).then((data) => {
+      const available = [...(data.radar?.past || []), ...(data.radar?.nowcast || [])]
+        .filter((frame) => frame?.path && data.host)
+        .map((frame) => ({ path: `${data.host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`, time: frame.time }));
+      setFrames(available); setFrameIndex(Math.max(0, available.length - 1));
+    }).catch(() => setFrames([])), []);
   useEffect(() => {
-    const refreshRadar = () => fetch("https://api.rainviewer.com/public/weather-maps.json", { cache: "no-store" })
-      .then(async (response) => { if (!response.ok) throw new Error("Radar request failed"); return response.json(); }).then((data) => {
-        const available = [...(data.radar?.past || []), ...(data.radar?.nowcast || [])]
-          .filter((frame) => frame?.path && data.host)
-          .map((frame) => ({ path: `${data.host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`, time: frame.time }));
-        setFrames(available); setFrameIndex(Math.max(0, available.length - 1));
-      }).catch(() => setFrames([]));
-    refreshRadar(); const id = window.setInterval(refreshRadar, 300000); return () => window.clearInterval(id);
-  }, []);
+    const refreshWhenActive = () => {
+      if (document.visibilityState === "visible") refreshRadar();
+    };
+    refreshRadar();
+    const id = window.setInterval(refreshRadar, 300000);
+    window.addEventListener("focus", refreshWhenActive);
+    document.addEventListener("visibilitychange", refreshWhenActive);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("focus", refreshWhenActive);
+      document.removeEventListener("visibilitychange", refreshWhenActive);
+    };
+  }, [refreshRadar]);
   useEffect(() => {
     if (!playing || frames.length < 2) return;
     const timer = window.setInterval(() => setFrameIndex((index) => (index + 1) % frames.length), 700);
